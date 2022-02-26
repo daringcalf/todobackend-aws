@@ -322,7 +322,7 @@ Resources:
         - Name: collectstatic
           Essential: false
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/docker-in-aws/todobackend:${ApplicationImageTag}
-          MemoryReservation: 5
+          MemoryReservation: 6
           Cpu: 5
           MountPoints:
             - SourceVolume: public
