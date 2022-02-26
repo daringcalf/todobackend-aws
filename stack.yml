@@ -353,6 +353,7 @@ Resources:
       - ApplicationAutoscaling
       - ApplicationLogGroup
       - ApplicationLoadBalancerHttpListener
+      - MigrateTask
     Properties:
       TaskDefinition: !Ref ApplicationTaskDefinition
       Cluster: !Ref ApplicationCluster
@@ -456,6 +457,47 @@ Resources:
     Properties:
       LogGroupName: !Sub /aws/lambda/${AWS::StackName}-ecsTasks
       RetentionInDays: 7
+
+  MigrateTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+      Properties:
+        Family: todobackend-migrate
+        ContainerDefinitions:
+          - Name: migrate
+            Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/docker-in-aws/todobackend:${ApplicationImageTag}
+            MemoryReservation: 6
+            Cpu: 5
+            Environment:
+              - Name: DJANGO_SETTINGS_MODULE
+                Value: todobackend.settings_release
+              - Name: MYSQL_HOST
+                Value: !Sub ${ApplicationDatabase.Endpoint.Address}
+              - Name: MYSQL_USER
+                Value: todobackend
+              - Name: MYSQL_PASSWORD
+                Value: !Ref DatabasePassword
+              - Name: MYSQL_DATABASE
+                Value: todobackend
+            Command: 
+              - python3
+              - manage.py
+              - migrate
+              - --no-input
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: !Sub /${AWS::StackName}/ecs/todobackend
+                awslogs-region: !Ref AWS::Region
+                awslogs-stream-prefix: docker
+  MigrateTask:
+    Type: AWS::CloudFormation::CustomResource
+    DependsOn:
+      - ApplicationAutoscaling
+      - ApplicationDatabase
+    Properties:
+      ServiceToken: !Sub ${EcsTaskRunner.Arn}
+      Cluster: !Ref ApplicationCluster
+      TaskDefinition: !Ref MigrateTaskDefinition
 
 Outputs:
   PublicURL:
