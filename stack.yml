@@ -15,10 +15,6 @@ Parameters:
   VpcId:
     Type: AWS::EC2::VPC::Id
     Description: Target VPC
-  DatabasePassword:
-    Type: String
-    Description: Database password
-    NoEcho: "true"
   ApplicationImageTag:
     Type: String
     Description: Application Docker Image Tag
@@ -162,7 +158,7 @@ Resources:
       AllocatedStorage: 10
       StorageType: gp2
       MasterUsername: todobackend
-      MasterUserPassword: !Ref DatabasePassword
+      MasterUserPassword: !Sub ${Secrets.MYSQL_PASSWORD}
       DBName: todobackend
       VPCSecurityGroups:
         - !Ref ApplicationDatabaseSecurityGroup
@@ -303,6 +299,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: todobackend
+      TaskRoleArn: !Sub ${ApplicationTaskRole.Arn}
       Volumes:
         - Name: public
           Host:
@@ -322,8 +319,10 @@ Resources:
               Value: !Sub ${ApplicationDatabase.Endpoint.Address}
             - Name: MYSQL_USER
               Value: todobackend
-            - Name: MYSQL_PASSWORD
-              Value: !Ref DatabasePassword
+            - Name: SECRETS
+              Value: todobackend/credentials
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
             - Name: MYSQL_DATABASE
               Value: todobackend
             - Name: SECRET_KEY
@@ -489,6 +488,7 @@ Resources:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: todobackend-migrate
+      TaskRoleArn: !Sub ${ApplicationTaskRole.Arn}
       ContainerDefinitions:
         - Name: migrate
           Image: !Sub ${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/docker-in-aws/todobackend:${ApplicationImageTag}
@@ -501,8 +501,10 @@ Resources:
               Value: !Sub ${ApplicationDatabase.Endpoint.Address}
             - Name: MYSQL_USER
               Value: todobackend
-            - Name: MYSQL_PASSWORD
-              Value: !Ref DatabasePassword
+            - Name: SECRETS
+              Value: todobackend/credentials
+            - Name: AWS_DEFAULT_REGION
+              Value: !Ref AWS::Region
             - Name: MYSQL_DATABASE
               Value: todobackend
           Command: 
@@ -525,6 +527,94 @@ Resources:
       ServiceToken: !Sub ${EcsTaskRunner.Arn}
       Cluster: !Ref ApplicationCluster
       TaskDefinition: !Ref MigrateTaskDefinition
+
+  SecretsManager:
+    Type: AWS::Lambda::Function
+    DependsOn:
+      - SecretsManagerLogGroup
+    Properties:
+      FunctionName: !Sub ${AWS::StackName}-secretsManager
+      Description: !Sub ${AWS::StackName} Secrets Manager
+      Handler: index.handler
+      MemorySize: 128
+      Runtime: python3.6
+      Timeout: 300
+      Role: !Sub ${SecretsManagerRole.Arn}
+      Code:
+        ZipFile: |
+          import cfnresponse, json, sys, os
+          import boto3
+
+          client = boto3.client('secretsmanager')
+
+          def handler(event, context):
+            sys.stdout = sys.__stdout__
+            try:
+              print("Received event %s" % event)
+              if event['RequestType'] == 'Delete':
+                cfnresponse.send(event, context, cfnresponse.SUCCESS, {}, event['PhysicalResourceId'])
+                return
+              secret = client.get_secret_value(
+                SecretId=event['ResourceProperties']['SecretId'],
+              )
+              credentials = json.loads(secret['SecretString'])
+              # Suppress logging output to ensure credential values are kept secure
+              with open(os.devnull, "w") as devnull:
+                sys.stdout = devnull
+                cfnresponse.send(
+                  event, 
+                  context, 
+                  cfnresponse.SUCCESS,
+                  credentials, # This dictionary will be exposed to CloudFormation resources
+                  secret['VersionId'], # Physical ID of the custom resource
+                  noEcho=True
+                )
+            except Exception as e:
+              print("A failure occurred with exception %s" % e)
+              cfnresponse.send(event, context, cfnresponse.FAILED, {})
+  SecretsManagerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SecretsManagerPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: GetSecrets
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:todobackend/*
+              - Sid: DecryptSecrets
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !ImportValue secrets-key
+              - Sid: ManageLambdaLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${SecretsManagerLogGroup.Arn}
+  SecretsManagerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-secretsManager
+      RetentionInDays: 7
+
+  Secrets:
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !Sub ${SecretsManager.Arn}
+      SecretId: todobackend/credentials
 
 Outputs:
   PublicURL:
