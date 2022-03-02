@@ -272,6 +272,33 @@ Resources:
         - Key: deregistration_delay.timeout_seconds
           Value: 30
 
+  ApplicationTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: SecretsManagerPermissions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: GetSecrets
+                Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:todobackend/*
+              - Sid: DecryptSecrets
+                Effect: Allow
+                Action:
+                  - kms:Decrypt
+                Resource: !ImportValue secrets-key
+
   ApplicationTaskDefinition:
     Type: AWS::ECS::TaskDefinition
     Properties:
