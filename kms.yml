@@ -24,6 +24,14 @@ Resources:
     Properties:
       AliasName: alias/secrets-key
       TargetKeyId: !Ref KmsKey
+  
+  MySecretA:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: todobackend/credentials
+      Description: "Todobackend Credentials"
+      SecretString: '{"MYSQL_PASSWORD":"my-super-secret-password"}'
+      KmsKeyId: !Ref KmsKey
 
 Outputs:
   KmsKey:
